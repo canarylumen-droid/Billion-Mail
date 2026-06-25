@@ -28,6 +28,7 @@ import (
         crm_ctrl "billionmail-core/internal/controller/crm"
         esp_ctrl "billionmail-core/internal/controller/esp"
         delivery_ctrl "billionmail-core/internal/controller/delivery"
+        relay_pool_ctrl "billionmail-core/internal/controller/relay_pool"
         "billionmail-core/internal/service/database_initialization"
         docker "billionmail-core/internal/service/dockerapi"
         "billionmail-core/internal/service/maillog_stat"
@@ -343,6 +344,7 @@ var (
                                         crm_ctrl.NewV1(),
                                         esp_ctrl.NewV1(),
                                         delivery_ctrl.NewV1(),
+                                        relay_pool_ctrl.NewV1(),
                                 )
                         })
 

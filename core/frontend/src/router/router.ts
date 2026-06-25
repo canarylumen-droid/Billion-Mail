@@ -18,6 +18,7 @@ const routesReflectList = [
         'IP Pools',
         'Delivery',
         'Delivery Backend',
+        'Relay Providers',
         'Logs',
         'Settings',
         'Automation',

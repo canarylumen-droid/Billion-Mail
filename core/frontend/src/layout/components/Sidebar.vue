@@ -121,6 +121,7 @@ const iconMap: Record<string, VNodeChild> = {
         'ip-pools': <i class="i-mdi-ip-network-outline"></i>,
         delivery: <i class="i-mdi-chart-bar"></i>,
         'delivery-backend': <i class="i-mdi-rocket-launch-outline"></i>,
+        'relay-pool': <i class="i-mdi-api"></i>,
         logout: <i class="i-mdi-logout"></i>,
 }
 
