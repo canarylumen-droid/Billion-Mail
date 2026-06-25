@@ -1,0 +1,1 @@
+- [Rspack webpackContext regex](rspack-webpack-context-regex.md) — context keys include "./" prefix; regex must start with "\./" or all routes silently disappear
