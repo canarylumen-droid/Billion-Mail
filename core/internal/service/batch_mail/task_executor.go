@@ -181,6 +181,7 @@ const (
 type SendResult struct {
         RecipientID int
         Success     bool
+        Deferred    bool  // true when pool is exhausted — recipient stays pending, retried next run
         MessageID   string
         Error       error
 }
@@ -820,6 +821,9 @@ func (e *TaskExecutor) processRecipientBatch(ctx context.Context, task *entity.E
                         if result.Success {
                                 e.sentCount.Add(1)
                                 e.consecutiveFailures.Store(0)
+                        } else if result.Deferred {
+                                // pool exhausted — recipient stays pending, not counted as failure
+                                g.Log().Infof(ctx, "recipient %d deferred (relay pool exhausted, will retry next run)", result.RecipientID)
                         } else {
                                 e.failedCount.Add(1)
                                 failures := e.consecutiveFailures.Add(1)
@@ -1009,6 +1013,10 @@ func (e *TaskExecutor) processSendResults(ctx context.Context, resultChan <-chan
 
                         if result.Success {
                                 successResults = append(successResults, result)
+                        } else if result.Deferred {
+                                // Pool exhausted — leave recipient as pending (is_sent=0) so it is
+                                // retried automatically when the pool resets at midnight UTC.
+                                g.Log().Infof(ctx, "recipient %d deferred (pool exhausted); stays pending for next-day retry", result.RecipientID)
                         } else {
                                 failedIDs = append(failedIDs, result.RecipientID)
 
@@ -1235,34 +1243,61 @@ func (e *TaskExecutor) sendEmail(ctx context.Context, task *entity.EmailTask, re
         //g.Log().Infof(ctx, "sendEmail - final check before sending: sender=%s, display_name=%s, subject=%s, recipient=%s",
         //      currentTask.Addresser, currentTask.FullName, renderedSubject, recipient.Recipient)
 
-        // send email via direct SMTP
+        poolMsg := &relay_pool.EmailMessage{
+                FromEmail: currentTask.Addresser,
+                FromName:  currentTask.FullName,
+                ToEmail:   recipient.Recipient,
+                Subject:   renderedSubject,
+                HTML:      renderedContent,
+        }
+
+        // ── Pool-first routing ────────────────────────────────────────────────
+        // When auto-route is enabled and at least one slot is available,
+        // try the relay pool FIRST; fall back to direct SMTP only when the
+        // pool is empty/unconfigured or returns a transient error.
+        if relay_pool.IsAutoRouteEnabled(ctx) && relay_pool.IsPoolAvailable(ctx) {
+                poolResult, poolErr := relay_pool.SendViaPool(ctx, poolMsg)
+                if poolErr == nil {
+                        g.Log().Infof(ctx, "relay pool send succeeded via %s for %s", poolResult.ProviderName, recipient.Recipient)
+                        return &SendResult{
+                                RecipientID: recipient.Id,
+                                MessageID:   messageID,
+                                Success:     true,
+                        }
+                }
+                // Pool exhausted → defer; leave recipient pending for next-day retry.
+                if errors.Is(poolErr, relay_pool.ErrPoolExhausted) {
+                        g.Log().Infof(ctx, "relay pool exhausted for %s; deferring to next run", recipient.Recipient)
+                        return &SendResult{
+                                RecipientID: recipient.Id,
+                                Deferred:    true,
+                        }
+                }
+                // Transient pool error — fall through to direct SMTP.
+                g.Log().Warningf(ctx, "relay pool error for %s (%v); falling back to direct SMTP", recipient.Recipient, poolErr)
+        }
+
+        // ── Direct SMTP send ──────────────────────────────────────────────────
         err = sender.Send(message, []string{recipient.Recipient})
         if err != nil {
-                g.Log().Warningf(ctx, "direct SMTP send to %s failed (%v); trying relay pool fallback", recipient.Recipient, err)
+                g.Log().Error(ctx, "direct SMTP send to %s failed: %v", recipient.Recipient, err)
 
-                // Fallback: attempt relay pool if at least one active provider is configured.
-                if relay_pool.IsPoolAvailable(ctx) {
-                        poolMsg := &relay_pool.EmailMessage{
-                                FromEmail: currentTask.Addresser,
-                                FromName:  currentTask.FullName,
-                                ToEmail:   recipient.Recipient,
-                                Subject:   renderedSubject,
-                                HTML:      renderedContent,
-                        }
+                // Last-resort: if pool is configured but was not the primary path, try it now.
+                if !relay_pool.IsAutoRouteEnabled(ctx) && relay_pool.IsPoolAvailable(ctx) {
                         poolResult, poolErr := relay_pool.SendViaPool(ctx, poolMsg)
                         if poolErr == nil {
-                                g.Log().Infof(ctx, "relay pool fallback succeeded via %s (msgID=%s)", poolResult.ProviderName, poolResult.ProviderMessageID)
+                                g.Log().Infof(ctx, "relay pool fallback succeeded via %s for %s", poolResult.ProviderName, recipient.Recipient)
                                 return &SendResult{
                                         RecipientID: recipient.Id,
                                         MessageID:   messageID,
                                         Success:     true,
-                                        Error:       nil,
                                 }
                         }
-                        g.Log().Warningf(ctx, "relay pool fallback also failed: %v", poolErr)
+                        if errors.Is(poolErr, relay_pool.ErrPoolExhausted) {
+                                return &SendResult{RecipientID: recipient.Id, Deferred: true}
+                        }
                 }
 
-                g.Log().Error(ctx, "send email to %s failed (all paths): %v", recipient.Recipient, err)
                 return &SendResult{
                         RecipientID: recipient.Id,
                         Success:     false,
@@ -1274,7 +1309,6 @@ func (e *TaskExecutor) sendEmail(ctx context.Context, task *entity.EmailTask, re
                 RecipientID: recipient.Id,
                 MessageID:   messageID,
                 Success:     true,
-                Error:       nil,
         }
 }
 

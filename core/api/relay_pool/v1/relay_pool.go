@@ -124,6 +124,28 @@ type ResetCountersRes struct {
         api_v1.StandardRes
 }
 
+// GetPoolConfigReq — returns the global pool config (auto-route toggle etc.).
+type GetPoolConfigReq struct {
+        g.Meta        `path:"/relay_pool/config" method:"get" tags:"Relay Pool" summary:"Get relay pool global config"`
+        Authorization string `json:"authorization" in:"header" dc:"Authorization" v:"required"`
+}
+type GetPoolConfigRes struct {
+        api_v1.StandardRes
+        Data struct {
+                AutoRouteEnabled bool `json:"auto_route_enabled"`
+        } `json:"data"`
+}
+
+// UpdatePoolConfigReq — toggle auto-route and other global pool settings.
+type UpdatePoolConfigReq struct {
+        g.Meta           `path:"/relay_pool/config/update" method:"post" tags:"Relay Pool" summary:"Update relay pool global config"`
+        Authorization    string `json:"authorization" in:"header" dc:"Authorization" v:"required"`
+        AutoRouteEnabled *bool  `json:"auto_route_enabled"`
+}
+type UpdatePoolConfigRes struct {
+        api_v1.StandardRes
+}
+
 // CreateProviderReq — add a custom (non-seeded) provider slot.
 type CreateProviderReq struct {
         g.Meta        `path:"/relay_pool/create" method:"post" tags:"Relay Pool" summary:"Add a custom provider slot"`

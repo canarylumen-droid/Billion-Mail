@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS bm_relay_providers (
 CREATE INDEX IF NOT EXISTS idx_relay_providers_active ON bm_relay_providers(is_active, status);
 CREATE INDEX IF NOT EXISTS idx_relay_providers_type ON bm_relay_providers(provider_type);
 
+-- Single-row global config for relay pool behaviour
+CREATE TABLE IF NOT EXISTS bm_relay_pool_config (
+    id                  BIGSERIAL PRIMARY KEY,
+    auto_route_enabled  BOOLEAN NOT NULL DEFAULT FALSE  -- when TRUE, pool is tried first; SMTP is fallback
+);
+INSERT INTO bm_relay_pool_config (auto_route_enabled) VALUES (FALSE) ON CONFLICT DO NOTHING;
+
 -- Seed 30 default rows (15 providers × 2 slots) with correct free tier limits
 -- Users just fill in the api_key field to activate each slot
 

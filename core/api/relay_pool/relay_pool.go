@@ -14,4 +14,6 @@ type IRelayPoolV1 interface {
         TestProvider(ctx context.Context, req *v1.TestProviderReq) (res *v1.TestProviderRes, err error)
         TestPool(ctx context.Context, req *v1.TestPoolReq) (res *v1.TestPoolRes, err error)
         ResetCounters(ctx context.Context, req *v1.ResetCountersReq) (res *v1.ResetCountersRes, err error)
+        GetPoolConfig(ctx context.Context, req *v1.GetPoolConfigReq) (res *v1.GetPoolConfigRes, err error)
+        UpdatePoolConfig(ctx context.Context, req *v1.UpdatePoolConfigReq) (res *v1.UpdatePoolConfigRes, err error)
 }

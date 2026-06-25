@@ -248,6 +248,24 @@ func (c *ControllerV1) ResetCounters(ctx context.Context, req *v1.ResetCountersR
         return
 }
 
+func (c *ControllerV1) GetPoolConfig(ctx context.Context, req *v1.GetPoolConfigReq) (res *v1.GetPoolConfigRes, err error) {
+        res = &v1.GetPoolConfigRes{}
+        cfg := relay_pool.GetConfig(ctx)
+        res.Data.AutoRouteEnabled = cfg.AutoRouteEnabled
+        return
+}
+
+func (c *ControllerV1) UpdatePoolConfig(ctx context.Context, req *v1.UpdatePoolConfigReq) (res *v1.UpdatePoolConfigRes, err error) {
+        res = &v1.UpdatePoolConfigRes{}
+        if req.AutoRouteEnabled != nil {
+                if setErr := relay_pool.SetAutoRoute(ctx, *req.AutoRouteEnabled); setErr != nil {
+                        res.Code = 1
+                        res.Message = setErr.Error()
+                }
+        }
+        return
+}
+
 func (c *ControllerV1) CreateProvider(ctx context.Context, req *v1.CreateProviderReq) (res *v1.CreateProviderRes, err error) {
         res = &v1.CreateProviderRes{}
         result, dbErr := g.DB().Model("bm_relay_providers").Data(g.Map{
