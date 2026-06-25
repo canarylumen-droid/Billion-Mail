@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS bm_relay_providers (
     monthly_sent        INT NOT NULL DEFAULT 0,
     last_daily_reset    BIGINT NOT NULL DEFAULT 0,
     last_monthly_reset  BIGINT NOT NULL DEFAULT 0,
+    retry_after         BIGINT NOT NULL DEFAULT 0,         -- unix ts: skip provider until this time (exhaustion backoff)
     priority            INT NOT NULL DEFAULT 0,
     status              VARCHAR(20) NOT NULL DEFAULT 'unconfigured', -- unconfigured, active, exhausted, error
     is_active           BOOLEAN NOT NULL DEFAULT FALSE,
@@ -59,6 +60,6 @@ INSERT INTO bm_relay_providers (name, provider_type, slot, daily_limit, monthly_
   ('SocketLabs (Account 2)',     'socketlabs',   2, 1333, 40000, 30),
   ('Netcore (Account 1)',        'netcore',      1, 100,  3000,  25),
   ('Netcore (Account 2)',        'netcore',      2, 100,  3000,  25),
-  ('Mailtrap (Account 1)',       'mailtrap',     1, 33,   1000,  20),
-  ('Mailtrap (Account 2)',       'mailtrap',     2, 33,   1000,  20)
+  ('Loops (Account 1)',          'loops',        1, 67,   2000,  20),
+  ('Loops (Account 2)',          'loops',        2, 67,   2000,  20)
 ON CONFLICT (provider_type, slot) DO NOTHING;

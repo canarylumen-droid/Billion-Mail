@@ -22,8 +22,8 @@
 | SparkPost | 17 | 500 | ×2 | 1,000 |
 | SocketLabs | 1,333 | 40,000 | ×2 | 80,000 |
 | Netcore | 100 | 3,000 | ×2 | 6,000 |
-| Mailtrap | 33 | 1,000 | ×2 | 2,000 |
-| **TOTAL** | **3,287/day** | **~99k/month** | — | **~197,200/month** |
+| Loops | 67 | 2,000 | ×2 | 4,000 |
+| **TOTAL** | **3,321/day** | **~100k/month** | — | **~193,200/month** |
 
 > SocketLabs free trial gives 40,000 for the first month. After trial it drops to ~1,000/month paid.
 > Numbers are approximate — providers adjust free tiers over time.
@@ -187,15 +187,17 @@
   RELAY_NETCORE_2_KEY=your_second_api_key_here
   ```
 
-### 15. Mailtrap
-- **Free tier:** 1,000 emails/month (Email Sending product, not sandbox)
-- **Sign up:** https://mailtrap.io/register/signup
-- **Get API key:** Email Sending → API Keys → Generate
-- **Note:** Use the "Email Sending" product, NOT the sandbox/inbox testing product
+### 15. Loops.so
+- **Free tier:** 2,000 emails/month (~67/day)
+- **Sign up:** https://loops.so
+- **Get API key:** loops.so → Settings → API → Generate new key
+- **Note:** Loops uses *transactional templates*. Before using this slot, create a template in Loops with the following data variables: `subject`, `html`, `text`, `fromName`, `fromEmail`. Then paste the **template ID** into the "Transactional Template ID" (api_key_2) field in BillionMail.
 - **Env vars:**
   ```
-  RELAY_MAILTRAP_1_KEY=your_api_token_here
-  RELAY_MAILTRAP_2_KEY=your_second_api_token_here
+  RELAY_LOOPS_1_KEY=your_api_key_here
+  RELAY_LOOPS_1_KEY2=your_transactional_template_id
+  RELAY_LOOPS_2_KEY=your_second_api_key_here
+  RELAY_LOOPS_2_KEY2=your_second_template_id
   ```
 
 ---

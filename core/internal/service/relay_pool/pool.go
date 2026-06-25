@@ -22,6 +22,7 @@ type ProviderRow struct {
 	MonthlySent      int
 	LastDailyReset   int64
 	LastMonthlyReset int64
+	RetryAfter       int64
 	Priority         int
 	Status           string
 	IsActive         bool
@@ -29,7 +30,13 @@ type ProviderRow struct {
 
 // SendViaPool picks the first available configured provider and sends the
 // message. It falls back through all providers in priority order.
-// Returns the SendResult from the successful provider (or the last error if all fail).
+// When all configured providers are exhausted for today, it returns
+// ErrPoolExhausted so the caller can queue for retry next day.
+var ErrPoolExhausted = fmt.Errorf("relay_pool: all configured providers are exhausted — email queued for retry after midnight UTC")
+
+// SendViaPool routes a message through the highest-priority available slot.
+// Returns the SendResult from the first successful provider or ErrPoolExhausted
+// if every slot has hit its daily/monthly limit.
 func SendViaPool(ctx context.Context, msg *EmailMessage) (SendResult, error) {
 	providers, err := loadActiveProviders(ctx)
 	if err != nil {
@@ -39,24 +46,35 @@ func SendViaPool(ctx context.Context, msg *EmailMessage) (SendResult, error) {
 		return SendResult{}, fmt.Errorf("relay_pool: no active providers configured — add API keys in Settings → Relay Providers")
 	}
 
+	now := time.Now().Unix()
+	allExhausted := true
 	var lastErr error
+
 	for _, row := range providers {
-		// Reset daily counter if needed
+		// Honour backoff window from previous exhaustion
+		if row.RetryAfter > 0 && now < row.RetryAfter {
+			continue
+		}
+
+		// Lazy daily reset: if the stored reset timestamp is from a previous
+		// calendar day (or was never set), zero the counter and record today.
 		if needsDailyReset(row) {
 			_ = resetDaily(ctx, row.ID)
 			row.DailySent = 0
 		}
-		// Reset monthly counter if needed
+		// Lazy monthly reset
 		if needsMonthlyReset(row) {
 			_ = resetMonthly(ctx, row.ID)
 			row.MonthlySent = 0
 		}
 
-		// Skip if exhausted
+		// Skip exhausted slots
 		if row.DailySent >= row.DailyLimit || row.MonthlySent >= row.MonthlyLimit {
-			_ = updateStatus(ctx, row.ID, "exhausted", "")
+			_ = markExhausted(ctx, row.ID)
 			continue
 		}
+
+		allExhausted = false
 
 		impl, ok := GetProvider(row.ProviderType)
 		if !ok {
@@ -70,16 +88,18 @@ func SendViaPool(ctx context.Context, msg *EmailMessage) (SendResult, error) {
 			continue
 		}
 
-		// Increment counters
+		// Increment counters and mark active
 		_ = incrementCounters(ctx, row.ID)
-		_ = updateStatus(ctx, row.ID, "active", "")
 		return result, nil
 	}
 
+	if allExhausted {
+		return SendResult{}, ErrPoolExhausted
+	}
 	if lastErr != nil {
 		return SendResult{}, fmt.Errorf("relay_pool: all providers failed, last error: %w", lastErr)
 	}
-	return SendResult{}, fmt.Errorf("relay_pool: all configured providers are exhausted for today — resets at midnight UTC")
+	return SendResult{}, ErrPoolExhausted
 }
 
 // IsPoolAvailable returns true if at least one active, non-exhausted provider is configured.
@@ -89,7 +109,11 @@ func IsPoolAvailable(ctx context.Context) bool {
 		return false
 	}
 	now := time.Now()
+	nowUnixVal := now.Unix()
 	for _, row := range providers {
+		if row.RetryAfter > 0 && nowUnixVal < row.RetryAfter {
+			continue
+		}
 		dailySent := row.DailySent
 		if needsDailyReset(row) {
 			dailySent = 0
@@ -99,7 +123,6 @@ func IsPoolAvailable(ctx context.Context) bool {
 			monthlySent = 0
 		}
 		if dailySent < row.DailyLimit && monthlySent < row.MonthlyLimit {
-			_ = now
 			return true
 		}
 	}
@@ -122,6 +145,7 @@ func loadActiveProviders(ctx context.Context) ([]ProviderRow, error) {
 		MonthlySent      int    `json:"monthly_sent"`
 		LastDailyReset   int64  `json:"last_daily_reset"`
 		LastMonthlyReset int64  `json:"last_monthly_reset"`
+		RetryAfter       int64  `json:"retry_after"`
 		Priority         int    `json:"priority"`
 		Status           string `json:"status"`
 		IsActive         bool   `json:"is_active"`
@@ -144,24 +168,30 @@ func loadActiveProviders(ctx context.Context) ([]ProviderRow, error) {
 			DailyLimit: r.DailyLimit, MonthlyLimit: r.MonthlyLimit,
 			DailySent: r.DailySent, MonthlySent: r.MonthlySent,
 			LastDailyReset: r.LastDailyReset, LastMonthlyReset: r.LastMonthlyReset,
-			Priority: r.Priority, Status: r.Status, IsActive: r.IsActive,
+			RetryAfter: r.RetryAfter,
+			Priority:   r.Priority, Status: r.Status, IsActive: r.IsActive,
 		})
 	}
 	return result, nil
 }
 
+// needsDailyReset returns true when the daily counter should be zeroed.
+// Treats last_daily_reset == 0 as "first use" and resets to initialize.
 func needsDailyReset(row ProviderRow) bool {
 	if row.LastDailyReset == 0 {
-		return false
+		// Never been reset — initialize the timestamp to today so counters
+		// track correctly from the very first send.
+		return true
 	}
 	last := time.Unix(row.LastDailyReset, 0).UTC()
 	now := time.Now().UTC()
 	return last.Year() != now.Year() || last.YearDay() != now.YearDay()
 }
 
+// needsMonthlyReset returns true when the monthly counter should be zeroed.
 func needsMonthlyReset(row ProviderRow) bool {
 	if row.LastMonthlyReset == 0 {
-		return false
+		return true
 	}
 	last := time.Unix(row.LastMonthlyReset, 0).UTC()
 	now := time.Now().UTC()
@@ -172,6 +202,7 @@ func resetDaily(ctx context.Context, id int64) error {
 	_, err := g.DB().Model("bm_relay_providers").Where("id", id).Data(g.Map{
 		"daily_sent":       0,
 		"last_daily_reset": time.Now().Unix(),
+		"retry_after":      0,
 		"updated_at":       time.Now().Unix(),
 	}).Update()
 	return err
@@ -182,6 +213,18 @@ func resetMonthly(ctx context.Context, id int64) error {
 		"monthly_sent":       0,
 		"last_monthly_reset": time.Now().Unix(),
 		"updated_at":         time.Now().Unix(),
+	}).Update()
+	return err
+}
+
+// markExhausted sets status to exhausted and sets retry_after to tomorrow midnight UTC.
+func markExhausted(ctx context.Context, id int64) error {
+	now := time.Now().UTC()
+	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	_, err := g.DB().Model("bm_relay_providers").Where("id", id).Data(g.Map{
+		"status":      "exhausted",
+		"retry_after": tomorrow.Unix(),
+		"updated_at":  time.Now().Unix(),
 	}).Update()
 	return err
 }
@@ -198,6 +241,8 @@ func incrementCounters(ctx context.Context, id int64) error {
 	_, err = g.DB().Model("bm_relay_providers").Where("id", id).Data(g.Map{
 		"last_used_at": time.Now().Unix(),
 		"status":       "active",
+		"last_error":   "",
+		"retry_after":  0,
 	}).Update()
 	return err
 }
